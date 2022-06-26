@@ -271,6 +271,95 @@
         (skip-chars-forward "^}")
         (forward-char)))))
 
+(defun odin--proper-indentation (parse-status)
+  "A copy of js--proper-indentation with odin #partial switch indentation fix."
+  (save-excursion
+    (back-to-indentation)
+    (cond ((nth 4 parse-status)    ; inside comment
+           (js--get-c-offset 'c (nth 8 parse-status)))
+          ((nth 3 parse-status) 0) ; inside string
+          ((when (and js-jsx-syntax (not js-jsx--indent-col))
+             (save-excursion (js-jsx--indentation parse-status))))
+          ((eq (char-after) ?#) 4)
+          ((save-excursion (js--beginning-of-macro)) 4)
+          ;; Indent array comprehension continuation lines specially.
+          ((let ((bracket (nth 1 parse-status))
+                 beg)
+             (and bracket
+                  (not (js--same-line bracket))
+                  (setq beg (js--indent-in-array-comp bracket))
+                  ;; At or after the first loop?
+                  (>= (point) beg)
+                  (js--array-comp-indentation bracket beg))))
+          ((js--chained-expression-p))
+          ((js--ctrl-statement-indentation))
+          ((js--multi-line-declaration-indentation))
+          ((nth 1 parse-status)
+	   ;; A single closing paren/bracket should be indented at the
+	   ;; same level as the opening statement. Same goes for
+	   ;; "case" and "default".
+           (let ((same-indent-p (looking-at "[]})]"))
+                 (switch-keyword-p (looking-at "default\\_>\\|case\\_>[^:]"))
+                 (continued-expr-p (js--continued-expression-p)))
+             (goto-char (nth 1 parse-status)) ; go to the opening char
+             (if (or (not js-indent-align-list-continuation)
+                     (looking-at "[({[]\\s-*\\(/[/*]\\|$\\)")
+                     (save-excursion (forward-char) (js--broken-arrow-terminates-line-p)))
+                 (progn ; nothing following the opening paren/bracket
+                   (skip-syntax-backward " ")
+                   (when (eq (char-before) ?\)) (backward-list))
+                   (back-to-indentation)
+                   (js--maybe-goto-declaration-keyword-end parse-status)
+                   (let* ((in-switch-p (unless same-indent-p
+                                         ;; (looking-at "\\_<switch\\_>")))
+                                         (looking-at "\\_<switch\\|#partial\\_>")))
+                          (same-indent-p (or same-indent-p
+                                             (and switch-keyword-p
+                                                  in-switch-p)))
+                          (indent
+                           (+
+                            (cond
+                             ((and js-jsx--indent-attribute-line
+                                   (eq js-jsx--indent-attribute-line
+                                       (line-number-at-pos)))
+                              js-jsx--indent-col)
+                             (t
+                              (current-column)))
+                            (cond (same-indent-p 0)
+                                  (continued-expr-p
+                                   (+ (* 2 js-indent-level)
+                                      js-expr-indent-offset))
+                                  (t
+                                   (+ js-indent-level
+                                      (pcase (char-after (nth 1 parse-status))
+                                        (?\( js-paren-indent-offset)
+                                        (?\[ js-square-indent-offset)
+                                        (?\{ js-curly-indent-offset))))))))
+                     (if in-switch-p
+                         (+ indent js-switch-indent-offset)
+                       indent)))
+               ;; If there is something following the opening
+               ;; paren/bracket, everything else should be indented at
+               ;; the same level.
+               (unless same-indent-p
+                 (forward-char)
+                 (skip-chars-forward " \t"))
+               (current-column))))
+
+          ((js--continued-expression-p)
+           (+ js-indent-level js-expr-indent-offset))
+          (t (prog-first-column)))))
+
+(defun odin-indent-line ()
+  "Indent the current line as odin (using javascript as base)."
+  (interactive)
+  (let* ((parse-status
+          (save-excursion (syntax-ppss (point-at-bol))))
+         (offset (- (point) (save-excursion (back-to-indentation) (point)))))
+    (unless (nth 3 parse-status)
+	  (indent-line-to (odin--proper-indentation parse-status)))
+      (when (> offset 0) (forward-char offset))))
+
 (defalias 'odin-parent-mode
  (if (fboundp 'prog-mode) 'prog-mode 'fundamental-mode))
 
@@ -284,7 +373,7 @@
   (setq-local comment-start-skip "\\(//+\\|/\\*+\\)\\s *")
   (setq-local comment-start "/*")
   (setq-local comment-end "*/")
-  (setq-local indent-line-function 'js-indent-line)
+  (setq-local indent-line-function 'odin-indent-line)
   (setq-local font-lock-defaults '(odin-font-lock-defaults))
   (setq-local beginning-of-defun-function 'odin-beginning-of-defun)
   (setq-local end-of-defun-function 'odin-end-of-defun)
