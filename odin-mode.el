@@ -299,7 +299,7 @@
 	   ;; same level as the opening statement. Same goes for
 	   ;; "case" and "default".
            (let ((same-indent-p (looking-at "[]})]"))
-                 (switch-keyword-p (looking-at "default\\_>\\|case\\_>[^:]"))
+                 (switch-keyword-p (looking-at "default\\_>\\|case\\|case:\\_>[^:]"))
                  (continued-expr-p (js--continued-expression-p)))
              (goto-char (nth 1 parse-status)) ; go to the opening char
              (if (or (not js-indent-align-list-continuation)
